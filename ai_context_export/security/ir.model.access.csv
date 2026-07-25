@@ -1,0 +1,2 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_ai_context_export_admin,ai.context.export.admin,model_ai_context_export,base.group_system,1,1,1,1

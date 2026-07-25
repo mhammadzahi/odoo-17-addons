@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_ai_context_export_form" model="ir.ui.view">
+        <field name="name">ai.context.export.form</field>
+        <field name="model">ai.context.export</field>
+        <field name="arch" type="xml">
+            <form string="AI Context Export">
+                <header>
+                    <button name="action_generate" type="object"
+                            string="Generate Context Files"
+                            class="btn-primary"/>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="state" widget="badge"/>
+                    </group>
+                    <group string="Deep-Dive Scope">
+                        <field name="only_custom_modules"/>
+                        <field name="sample_record_count"/>
+                    </group>
+                    <group string="Instance-Wide Sections">
+                        <field name="include_server_config"/>
+                        <field name="include_system_parameters"/>
+                        <field name="include_general_settings"/>
+                        <field name="include_company_info"/>
+                    </group>
+                    <group string="Result" invisible="state == 'draft'">
+                        <field name="zip_filename"/>
+                        <field name="zip_file" filename="zip_filename"/>
+                    </group>
+                    <group string="Log">
+                        <field name="log" nolabel="1" widget="text"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_ai_context_export_list" model="ir.ui.view">
+        <field name="name">ai.context.export.list</field>
+        <field name="model">ai.context.export</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name"/>
+                <field name="create_date"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_ai_context_export" model="ir.actions.act_window">
+        <field name="name">AI Context Export</field>
+        <field name="res_model">ai.context.export</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <menuitem id="menu_ai_context_export"
+              name="AI Context Export"
+              parent="base.menu_custom"
+              action="action_ai_context_export"
+              sequence="100"/>
+
+</odoo>
