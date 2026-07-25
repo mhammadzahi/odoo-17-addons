@@ -140,23 +140,30 @@ class AiContextExport(models.Model):
                 if not config_values[flag]:
                     continue
                 try:
-                    with new_cr.savepoint():
-                        files[filename] = generator()
+                    files[filename] = generator()
                     log_lines.append(f"  - Documented {label}")
                 except Exception as e:
                     log_lines.append(f"  - FAILED {label}: {e}")
                     _logger.exception("AI Context Export failed generating %s", label)
+                    # A failed statement leaves the whole transaction "aborted"
+                    # until it's rolled back - without this, every subsequent
+                    # query on new_cr (including for later sections/modules)
+                    # would fail too. This is a dedicated throwaway
+                    # cursor/transaction, so a full rollback is safe here.
+                    new_cr.rollback()
+                    worker_env.clear()
 
             for module in deep_dive_modules:
                 try:
-                    with new_cr.savepoint():
-                        content = worker._generate_module_md(module)
+                    content = worker._generate_module_md(module)
                     safe_name = module.name.replace('/', '_')
                     files[f'module_{safe_name}.md'] = content
                     log_lines.append(f"  - Documented module: {module.name}")
                 except Exception as e:
                     log_lines.append(f"  - FAILED for module {module.name}: {e}")
                     _logger.exception("AI Context Export failed for module %s", module.name)
+                    new_cr.rollback()
+                    worker_env.clear()
         finally:
             new_cr.rollback()
             new_cr.close()
@@ -364,16 +371,27 @@ class AiContextExport(models.Model):
                          "(it may only add views, data, or extend other modules' fields)._")
             return '\n'.join(lines)
 
+        failed_models = []
         for model_name in models_in_module:
             try:
-                with self.env.cr.savepoint():
-                    lines += self._generate_model_section(model_name)
+                lines += self._generate_model_section(model_name)
             except Exception as e:
+                failed_models.append(model_name)
                 lines.append(f"## Model: `{model_name}`")
                 lines.append("")
                 lines.append(f"_Could not document this model: {e}_")
                 lines.append("")
+                # Throwaway cursor for this whole export - a full rollback is
+                # the safe, reliable way to clear an aborted transaction so
+                # the remaining models/modules can still be processed.
+                self.env.cr.rollback()
+                self.env.clear()
                 _logger.exception("AI Context Export failed for model %s", model_name)
+
+        if failed_models:
+            lines.append(f"_{len(failed_models)} of {len(models_in_module)} model(s) "
+                         f"could not be documented: {', '.join(failed_models)}_")
+            lines.append("")
 
         return '\n'.join(lines)
 
