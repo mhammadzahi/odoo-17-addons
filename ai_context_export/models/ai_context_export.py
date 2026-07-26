@@ -23,6 +23,17 @@ SENSITIVE_KEY_MARKERS = (
     'access_key', 'auth_key', 'client_secret', 'credential',
 )
 
+# Field name prefixes/exact names that are generic framework "plumbing"
+# (mail thread, activity, portal-access mixins, audit columns) present on
+# almost every business model. They're deprioritized when picking which
+# fields to sample, since showing them tells you nothing about a model's
+# actual data shape.
+GENERIC_FIELD_SKIP_PREFIXES = ('message_', 'activity_', 'access_')
+GENERIC_FIELD_SKIP_NAMES = {
+    'create_uid', 'create_date', 'write_uid', 'write_date',
+    'display_name', '__last_update', 'website_message_ids',
+}
+
 
 def _is_sensitive(key):
     key_l = (key or '').lower()
@@ -258,7 +269,10 @@ class AiContextExport(models.Model):
         ]
         for key in sorted(options):
             value = options[key]
-            if _is_sensitive(key):
+            # Only redact string values - a boolean/int option merely whose
+            # *name* contains a marker like "pass" (e.g. a hypothetical
+            # `xmlrpc_passthrough` flag) can't actually hold a secret.
+            if _is_sensitive(key) and isinstance(value, str):
                 value = _mask(value)
             lines.append(f"| {key} | {value} |")
         return '\n'.join(lines)
@@ -323,7 +337,12 @@ class AiContextExport(models.Model):
                     value = value.display_name
                 if isinstance(value, (list, tuple)):
                     value = ', '.join(str(v) for v in value)
-                if _is_sensitive(name):
+                # By this point relational/list values have already been
+                # stringified above, so anything still non-string here is a
+                # boolean/int/date/etc. - those field types can't hold a real
+                # secret even if the field name matches a sensitive marker
+                # (e.g. the boolean `auth_signup_reset_password`).
+                if _is_sensitive(name) and isinstance(value, str):
                     value = _mask(value)
                 lines.append(f"| {name} | {value} |")
             lines.append("")
@@ -440,20 +459,33 @@ class AiContextExport(models.Model):
             if not records:
                 lines.append("_No records found in this model._")
             else:
-                display_fields = [f.name for f in field_records if f.name != 'id'][:8]
+                # Prefer the model's own business fields over generic
+                # mail/activity/access-mixin plumbing that's present on
+                # almost every model - otherwise the sample for a
+                # mail-thread-enabled model is just 8 rows of `active`/
+                # `activity_*`/`message_*`, never its actual data.
+                candidate_fields = [
+                    f for f in field_records
+                    if f.name != 'id'
+                    and f.name not in GENERIC_FIELD_SKIP_NAMES
+                    and not f.name.startswith(GENERIC_FIELD_SKIP_PREFIXES)
+                ] or [f for f in field_records if f.name != 'id']
+                display_fields = [f.name for f in candidate_fields][:8]
                 for rec in records:
                     lines.append(f"- **ID {rec.id}**")
                     for fname in display_fields:
-                        if _is_sensitive(fname):
-                            lines.append(f"  - {fname}: {_mask('x')}")
-                            continue
                         try:
                             val = getattr(rec, fname)
-                            if hasattr(val, 'display_name'):
-                                val = val.display_name
-                            lines.append(f"  - {fname}: {val}")
                         except Exception:
                             continue
+                        if hasattr(val, 'display_name'):
+                            val = val.display_name
+                        # Only redact once we know the actual value is a
+                        # string - a boolean/int field merely named like a
+                        # secret (e.g. `allow_tokenization`) isn't one.
+                        if _is_sensitive(fname) and isinstance(val, str):
+                            val = _mask(val)
+                        lines.append(f"  - {fname}: {val}")
         except Exception as e:
             lines.append(f"_Could not fetch sample records: {e}_")
 
